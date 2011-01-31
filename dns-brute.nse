@@ -195,7 +195,7 @@ end
 
 action = function(host)
 	if nmap.registry.args['dns-brute.domain'] then
-		domainname = parse_domain(nmap.registry.args['dns-brute.domain'])
+		domainname = nmap.registry.args['dns-brute.domain']
 	else
 		domainname = parse_domain(stdnse.get_hostname(host))
 	end
@@ -241,7 +241,6 @@ action = function(host)
 		stdnse.print_debug("Hosts per thread: "..howmany)
 		repeat
 			local j = math.min(i+howmany, #hostlist)
-			-- TODO: fix bug with very large hostlist on unpack
 			threads[stdnse.new_thread( thread_main,results, unpack(hostlist, i, j)  )] = true
 			i = j+1
 		until i > #hostlist
@@ -255,7 +254,6 @@ action = function(host)
 			end
 		end
 		if revcclass then
-			stdnse.print_debug("Running reverse DNS in identified c-classes")
 			cclasses = {}
 			ipaddresses = {}
 			local i = 1
@@ -272,6 +270,7 @@ action = function(host)
 				end
 			end
 			stdnse.print_debug("Will reverse lookup "..#ipaddresses.." IPs")
+			print_verb("Starting reverse DNS in c-classes")
 			local threads = {}
 			local howmany_ip = math.floor(#ipaddresses/max_threads)+1
 			local condvar = nmap.condvar( revresults )
