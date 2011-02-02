@@ -113,19 +113,11 @@ resolve = function (host)
 	end
 end
 
---- Convert an IP address to its in-addr.arpa notation
---@param ip IP address to convert
---@result The in-addr.arpa notation
-function iprev(ip)
-	local o1, o2, o3, o4 = ip:match("^(%d*)%.(%d*)%.(%d*)%.(%d*)$")
-	return o4..'.'..o3..'.'..o2..'.'..o1..'.in-addr.arpa'
-end
-
 --- Try to get the PTR record for an in-addr.arpa address
 --@param host Host to resolve
 --@result The PTR records or false
 revresolve = function (host)
-	local ipaddress = iprev(host)
+	local ipaddress = dns.reverse(host)
 	status, result = dns.query(ipaddress, {dtype='PTR',retAll=true})
 	if(status == true) then
 		return result
