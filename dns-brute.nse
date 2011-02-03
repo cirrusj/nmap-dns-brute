@@ -5,15 +5,17 @@ Attempts to find an DNS hostnames by brute force guessing.
 
 ---
 -- @usage
--- nmap --script dns-brute --script-args dns-brute.domain=foo.com, dns-brute.threads=6, 
---	dns-brute.cclass, dns-brute.hostlist=./hostfile.txt, newtargets -sS -p 80
+-- nmap --script dns-brute --script-args dns-brute.domain=foo.com,dns-brute.threads=6,dns-brute.cclass,dns-brute.hostlist=./hostfile.txt,newtargets -sS -p 80
 -- nmap --script dns-brute www.foo.com
+-- nmap -6 --script dns-brute --script-args dns-brute.cclass,dns-brute.domain=foo.com,dns-brute.ipv6=only,newtargets -v -p 80
 -- @args dns-brute.hostlist The filename of a list of host strings to try.
 -- @args dns-brute.threads Thread to use (default 5).
 -- @args dns-brute.cclass If specified, adds the reverse DNS for the c-class of all discovered IP addresses. cclass can 
---	also be set to the value 'printall' to print all reverse DNS names instead of only the ones matching the base domain
+--	 also be set to the value 'printall' to print all reverse DNS names instead of only the ones matching the base domain
+-- @args dns-brute.ipv6 Perform lookup for IPv6 addresses as well. ipv6 can also be se to the value 'only' to only lookup IPv6 records
 -- @args dns-brute.domain Domain name to brute force if no host is specified
--- @args newtargets Add discovered targets to nmap scan queue (only applies when dns-brute.domain has been set)
+-- @args newtargets Add discovered targets to nmap scan queue (only applies when dns-brute.domain has been set). 
+--	 If dns-brute.ipv6 is used don't forget to set the -6 Nmap flag, if you require scanning IPv6 hosts.
 -- @output
 -- Pre-scan script results:
 -- | dns-brute: 
@@ -100,6 +102,19 @@ function table.contains(table, element)
 	return false
 end
 
+--- Try to get the AAAA record for a host
+--@param host Hostname to resolve
+--@result The AAAA records or false
+resolve_v6 = function (host)
+	local dnsname = host..'.'..domainname
+	status, result = dns.query(dnsname, {dtype='AAAA',retAll=true})
+	if(status == true) then
+		return result
+	else
+		return false
+	end
+end
+
 --- Try to get the A record for a host
 --@param host Hostname to resolve
 --@result The A records or false
@@ -139,16 +154,32 @@ thread_main = function( results, ... )
 	local condvar = nmap.condvar( results )
 	local what = {n = select("#", ...), ...}
 	for i = 1, what.n do
-		local res = resolve(what[i])
-		if(res) then
-			for _,addr in ipairs(res) do
-				local hostn = what[i]..'.'..domainname
-				if nmap.registry.args['dns-brute.domain'] and target.ALLOW_NEW_TARGETS then
-					stdnse.print_debug("Added target: "..hostn)
-					local status,err = target.add(hostn)
+		if not (ipv6 == 'only') then
+			local res = resolve(what[i])
+			if(res) then
+				for _,addr in ipairs(res) do
+					local hostn = what[i]..'.'..domainname
+					if nmap.registry.args['dns-brute.domain'] and target.ALLOW_NEW_TARGETS then
+						stdnse.print_debug("Added target: "..hostn)
+						local status,err = target.add(hostn)
+					end
+					print_verb("Hostname: "..hostn.." IP: "..addr)
+					results[#results+1] = { hostname=hostn, address=addr }
 				end
-				print_verb("Hostname: "..hostn.." IP: "..addr)
-				results[#results+1] = { hostname=hostn, address=addr }
+			end
+		end
+		if ipv6 then
+			local res = resolve_v6(what[i])
+			if(res) then
+				for _,addr in ipairs(res) do
+					local hostn = what[i]..'.'..domainname
+					if nmap.registry.args['dns-brute.domain'] and target.ALLOW_NEW_TARGETS then
+						stdnse.print_debug("Added target: "..hostn)
+						local status,err = target.add(hostn)
+					end
+					print_verb("Hostname: "..hostn.." IP: "..addr)
+					results[#results+1] = { hostname=hostn, address=addr }
+				end
 			end
 		end
 	end
@@ -199,6 +230,7 @@ action = function(host)
 		print_verb("Starting dns-brute at: "..domainname)
 		local max_threads = nmap.registry.args['dns-brute.threads'] and tonumber( nmap.registry.args['dns-brute.threads'] ) or 5
 		revcclass = stdnse.get_script_args("dns-brute.cclass") or false
+		ipv6 = stdnse.get_script_args("dns-brute.ipv6") or false
 		stdnse.print_debug("THREADS: "..max_threads)
 		local fileName = nmap.registry.args['dns-brute.hostlist']
 		local commFile = fileName and nmap.fetchfile(fileName)
@@ -219,7 +251,7 @@ action = function(host)
 				file:close()
 			end
 		end
-		if (not hostlist) then	hostlist = {'www', 'mail', 'blog', 'ns0', 'ns1', 'mail2','mail3', 'admin','ads','ssh','voip','sip','dns','ns2','ns3','dns0','dns1','dns2','eshop','shop','forum','ftp', 'ftp0', 'host','log', 'mx0', 'mx1', 'mysql', 'sql', 'news', 'noc', 'ns', 'auth', 'administration', 'adserver', 'alerts', 'alpha', 'ap', 'app', 'apache', 'apps' ,'appserver', 'gw', 'backup', 'beta', 'cdn', 'chat', 'citrix', 'cms', 'erp', 'corp', 'intranet', 'crs', 'svn', 'cvs', 'git', 'db', 'database', 'demo', 'dev', 'devsql', 'dhcp', 'dmz', 'download', 'en', 'f5', 'fileserver', 'firewall', 'help', 'http', 'id', 'info', 'images', 'internal', 'internet', 'lab', 'ldap', 'linux', 'local', 'log', 'syslog', 'mailgate', 'main', 'manage', 'mgmt', 'monitor', 'mirror', 'mobile', 'mssql', 'oracle', 'exchange', 'owa', 'mta', 'mx', 'mx0', 'mx1', 'ntp', 'ops', 'pbx', 'whois', 'ssl', 'secure', 'server', 'smtp', 'squid', 'stage', 'stats', 'test', 'upload', 'vm', 'vnc', 'vpn', 'wiki', 'xml'} end
+		if (not hostlist) then	hostlist = {'www', 'mail', 'blog', 'ns0', 'ns1', 'mail2','mail3', 'admin','ads','ssh','voip','sip','dns','ns2','ns3','dns0','dns1','dns2','eshop','shop','forum','ftp', 'ftp0', 'host','log', 'mx0', 'mx1', 'mysql', 'sql', 'news', 'noc', 'ns', 'auth', 'administration', 'adserver', 'alerts', 'alpha', 'ap', 'app', 'apache', 'apps' ,'appserver', 'gw', 'backup', 'beta', 'cdn', 'chat', 'citrix', 'cms', 'erp', 'corp', 'intranet', 'crs', 'svn', 'cvs', 'git', 'db', 'database', 'demo', 'dev', 'devsql', 'dhcp', 'dmz', 'download', 'en', 'f5', 'fileserver', 'firewall', 'help', 'http', 'id', 'info', 'images', 'internal', 'internet', 'lab', 'ldap', 'linux', 'local', 'log', 'ipv6', 'syslog', 'mailgate', 'main', 'manage', 'mgmt', 'monitor', 'mirror', 'mobile', 'mssql', 'oracle', 'exchange', 'owa', 'mta', 'mx', 'mx0', 'mx1', 'ntp', 'ops', 'pbx', 'whois', 'ssl', 'secure', 'server', 'smtp', 'squid', 'stage', 'stats', 'test', 'upload', 'vm', 'vnc', 'vpn', 'wiki', 'xml'} end
 		local threads, results, revresults = {}, {}, {}
 		results['name'] = "Result:"
 		local condvar = nmap.condvar( results )
@@ -245,15 +277,19 @@ action = function(host)
 				if (coroutine.status(thread) ~= "dead") then done = false end
 			end
 		end
-		if revcclass then
+		if (revcclass and not (ipv6=='only')) then
 			cclasses = {}
 			ipaddresses = {}
 			local i = 1
 			for _, res in ipairs(results) do
-				local class = iptocclass(res['address'])
-				if(not table.contains(cclasses,class)) then
-					print_verb("C-Class: "..class..".0/24")
-					table.insert(cclasses,class)
+				if res['address']:match(":") then
+					print_verb("IPv6 class detected skipping: "..res['address'])
+				else
+					local class = iptocclass(res['address'])
+					if(not table.contains(cclasses,class)) then
+						print_verb("C-Class: "..class..".0/24")
+						table.insert(cclasses,class)
+					end
 				end
 			end
 			for _,class in ipairs(cclasses) do
