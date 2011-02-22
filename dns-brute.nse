@@ -229,8 +229,12 @@ action = function(host)
 		table.insert(nmap.registry.bruteddomains, domainname)
 		print_verb("Starting dns-brute at: "..domainname)
 		local max_threads = nmap.registry.args['dns-brute.threads'] and tonumber( nmap.registry.args['dns-brute.threads'] ) or 5
-		revcclass = stdnse.get_script_args("dns-brute.cclass") or false
 		ipv6 = stdnse.get_script_args("dns-brute.ipv6") or false
+		if(ipv6 == 'only') then
+			revcclass = false
+		else
+			revcclass = stdnse.get_script_args("dns-brute.cclass") or false
+		end
 		stdnse.print_debug("THREADS: "..max_threads)
 		local fileName = nmap.registry.args['dns-brute.hostlist']
 		local commFile = fileName and nmap.fetchfile(fileName)
@@ -249,6 +253,10 @@ action = function(host)
 					end
 				end
 				file:close()
+			end
+		else
+			if fileName then
+				print("dns-brute: Hostlist file not found. Will use default list.")
 			end
 		end
 		if (not hostlist) then	hostlist = {'www', 'mail', 'blog', 'ns0', 'ns1', 'mail2','mail3', 'admin','ads','ssh','voip','sip','dns','ns2','ns3','dns0','dns1','dns2','eshop','shop','forum','ftp', 'ftp0', 'host','log', 'mx0', 'mx1', 'mysql', 'sql', 'news', 'noc', 'ns', 'auth', 'administration', 'adserver', 'alerts', 'alpha', 'ap', 'app', 'apache', 'apps' ,'appserver', 'gw', 'backup', 'beta', 'cdn', 'chat', 'citrix', 'cms', 'erp', 'corp', 'intranet', 'crs', 'svn', 'cvs', 'git', 'db', 'database', 'demo', 'dev', 'devsql', 'dhcp', 'dmz', 'download', 'en', 'f5', 'fileserver', 'firewall', 'help', 'http', 'id', 'info', 'images', 'internal', 'internet', 'lab', 'ldap', 'linux', 'local', 'log', 'ipv6', 'syslog', 'mailgate', 'main', 'manage', 'mgmt', 'monitor', 'mirror', 'mobile', 'mssql', 'oracle', 'exchange', 'owa', 'mta', 'mx', 'mx0', 'mx1', 'ntp', 'ops', 'pbx', 'whois', 'ssl', 'secure', 'server', 'smtp', 'squid', 'stage', 'stats', 'test', 'upload', 'vm', 'vnc', 'vpn', 'wiki', 'xml'} end
