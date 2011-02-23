@@ -13,6 +13,7 @@ Attempts to find an DNS hostnames by brute force guessing.
 -- @args dns-brute.cclass If specified, adds the reverse DNS for the c-class of all discovered IP addresses. cclass can 
 --	 also be set to the value 'printall' to print all reverse DNS names instead of only the ones matching the base domain
 -- @args dns-brute.ipv6 Perform lookup for IPv6 addresses as well. ipv6 can also be se to the value 'only' to only lookup IPv6 records
+-- @args dns-brute.srv Perform lookup for SRV records
 -- @args dns-brute.domain Domain name to brute force if no host is specified
 -- @args newtargets Add discovered targets to nmap scan queue (only applies when dns-brute.domain has been set). 
 --	 If dns-brute.ipv6 is used don't forget to set the -6 Nmap flag, if you require scanning IPv6 hosts.
@@ -102,11 +103,24 @@ function table.contains(table, element)
 	return false
 end
 
+--- Try to get the SRV record for a host
+--@param host Hostname to resolve
+--@result The SRV records or false
+resolve_srv = function (host)
+	local dnsname = host
+	status, result = dns.query(dnsname, {dtype='SRV',retAll=true})
+	if(status == true) then
+		return result
+	else
+		return false
+	end
+end
+
 --- Try to get the AAAA record for a host
 --@param host Hostname to resolve
 --@result The AAAA records or false
 resolve_v6 = function (host)
-	local dnsname = host..'.'..domainname
+	local dnsname = host
 	status, result = dns.query(dnsname, {dtype='AAAA',retAll=true})
 	if(status == true) then
 		return result
@@ -119,7 +133,7 @@ end
 --@param host Hostname to resolve
 --@result The A records or false
 resolve = function (host)
-	local dnsname = host..'.'..domainname
+	local dnsname = host
 	status, result = dns.query(dnsname, {dtype='A',retAll=true})
 	if(status == true) then
 		return result
@@ -155,7 +169,7 @@ thread_main = function( results, ... )
 	local what = {n = select("#", ...), ...}
 	for i = 1, what.n do
 		if not (ipv6 == 'only') then
-			local res = resolve(what[i])
+			local res = resolve(what[i]..'.'..domainname)
 			if(res) then
 				for _,addr in ipairs(res) do
 					local hostn = what[i]..'.'..domainname
@@ -169,7 +183,7 @@ thread_main = function( results, ... )
 			end
 		end
 		if ipv6 then
-			local res = resolve_v6(what[i])
+			local res = resolve_v6(what[i]..'.'..domainname)
 			if(res) then
 				for _,addr in ipairs(res) do
 					local hostn = what[i]..'.'..domainname
@@ -179,6 +193,47 @@ thread_main = function( results, ... )
 					end
 					print_verb("Hostname: "..hostn.." IP: "..addr)
 					results[#results+1] = { hostname=hostn, address=addr }
+				end
+			end
+		end
+	end
+end
+
+srv_main = function( srvresults, ... )
+	local condvar = nmap.condvar( srvresults )
+	local what = {n = select("#", ...), ...}
+	for i = 1, what.n do
+		local res = resolve_srv(what[i]..'.'..domainname)
+		if(res) then
+			for _,addr in ipairs(res) do
+				local hostn = what[i]..'.'..domainname
+				addr = stdnse.strsplit(":",addr)
+				if not (ipv6 == 'only') then
+					local srvres = resolve(addr[4])
+					if(srvres) then
+						for srvhost,srvip in ipairs(srvres) do
+							print_verb("Hostname: "..hostn.." IP: "..srvip)
+							srvresults[#srvresults+1] = { hostname=hostn, address=srvip }
+							if nmap.registry.args['dns-brute.domain'] and target.ALLOW_NEW_TARGETS then
+								stdnse.print_debug("Added target: "..srvip)
+								local status,err = target.add(srvip)
+							end
+						end
+					end
+				end
+				if ipv6 then
+					local srvres = resolve_v6(addr[4])
+					if(srvres) then
+						for srvhost,srvip in ipairs(srvres) do
+							print_verb("Hostname: "..hostn.." IP: "..srvip)
+							srvresults[#srvresults+1] = { hostname=hostn, address=srvip }
+							if nmap.registry.args['dns-brute.domain'] and target.ALLOW_NEW_TARGETS then
+								stdnse.print_debug("Added target: "..srvip)
+								local status,err = target.add(srvip)
+							end
+						end
+					end
+
 				end
 			end
 		end
@@ -230,6 +285,7 @@ action = function(host)
 		print_verb("Starting dns-brute at: "..domainname)
 		local max_threads = nmap.registry.args['dns-brute.threads'] and tonumber( nmap.registry.args['dns-brute.threads'] ) or 5
 		ipv6 = stdnse.get_script_args("dns-brute.ipv6") or false
+		dosrv = stdnse.get_script_args("dns-brute.srv") or false
 		if(ipv6 == 'only') then
 			revcclass = false
 		else
@@ -260,7 +316,9 @@ action = function(host)
 			end
 		end
 		if (not hostlist) then	hostlist = {'www', 'mail', 'blog', 'ns0', 'ns1', 'mail2','mail3', 'admin','ads','ssh','voip','sip','dns','ns2','ns3','dns0','dns1','dns2','eshop','shop','forum','ftp', 'ftp0', 'host','log', 'mx0', 'mx1', 'mysql', 'sql', 'news', 'noc', 'ns', 'auth', 'administration', 'adserver', 'alerts', 'alpha', 'ap', 'app', 'apache', 'apps' ,'appserver', 'gw', 'backup', 'beta', 'cdn', 'chat', 'citrix', 'cms', 'erp', 'corp', 'intranet', 'crs', 'svn', 'cvs', 'git', 'db', 'database', 'demo', 'dev', 'devsql', 'dhcp', 'dmz', 'download', 'en', 'f5', 'fileserver', 'firewall', 'help', 'http', 'id', 'info', 'images', 'internal', 'internet', 'lab', 'ldap', 'linux', 'local', 'log', 'ipv6', 'syslog', 'mailgate', 'main', 'manage', 'mgmt', 'monitor', 'mirror', 'mobile', 'mssql', 'oracle', 'exchange', 'owa', 'mta', 'mx', 'mx0', 'mx1', 'ntp', 'ops', 'pbx', 'whois', 'ssl', 'secure', 'server', 'smtp', 'squid', 'stage', 'stats', 'test', 'upload', 'vm', 'vnc', 'vpn', 'wiki', 'xml'} end
-		local threads, results, revresults = {}, {}, {}
+		local srvlist = {'_afpovertcp._tcp','_ssh._tcp','_autodiscover._tcp','_caldav._tcp','_client._smtp','_gc._tcp','_h323cs._tcp','_h323cs._udp','_h323ls._tcp','_h323ls._udp','_h323rs._tcp','_h323rs._tcp','_http._tcp','_iax.udp','_imap._tcp','_imaps._tcp','_jabber-client._tcp','_jabber._tcp','_kerberos-adm._tcp','_kerberos._tcp','_kerberos._tcp.dc._msdcs','_kerberos._udp','_kpasswd._tcp','_kpasswd._udp','_ldap._tcp','_ldap._tcp.dc._msdcs','_ldap._tcp.gc._msdcs','_ldap._tcp.pdc._msdcs','_msdcs','_mysqlsrv._tcp','_ntp._udp','_pop3._tcp','_pop3s._tcp','_sip._tcp','_sip._tls','_sip._udp','_sipfederationtls._tcp','_sipinternaltls._tcp','_sips._tcp','_smtp._tcp','_stun._tcp','_stun._udp','_tcp','_tls','_udp','_vlmcs._tcp','_vlmcs._udp','_wpad._tcp','_xmpp-client._tcp','_xmpp-server._tcp'}
+
+		local threads, results, revresults, srvresults = {}, {}, {}, {}
 		results['name'] = "Result:"
 		local condvar = nmap.condvar( results )
 		local i = 1
@@ -285,6 +343,29 @@ action = function(host)
 				if (coroutine.status(thread) ~= "dead") then done = false end
 			end
 		end
+
+		if(dosrv) then
+			local i = 1
+			local threads = {}
+			local howmany_ip = math.floor(#srvlist/max_threads)+1
+			local condvar = nmap.condvar( srvresults )
+			stdnse.print_debug("SRV's per thread: "..howmany_ip)
+			repeat
+				local j = math.min(i+howmany_ip, #srvlist)	
+				threads[stdnse.new_thread( srv_main,srvresults, unpack(srvlist, i, j)  )] = true
+				i = j+1
+			until i > #srvlist
+			local done
+			-- wait for all threads to finish
+			while( not(done) ) do
+				condvar("wait")
+				done = true
+				for thread in pairs(threads) do
+					if (coroutine.status(thread) ~= "dead") then done = false end
+				end
+			end
+		end
+
 		if (revcclass and not (ipv6=='only')) then
 			cclasses = {}
 			ipaddresses = {}
@@ -297,6 +378,19 @@ action = function(host)
 					if(not table.contains(cclasses,class)) then
 						print_verb("C-Class: "..class..".0/24")
 						table.insert(cclasses,class)
+					end
+				end
+			end
+			if(dosrv) then
+				for _, res in ipairs(srvresults) do
+					if res['address']:match(":") then
+						print_verb("IPv6 class detected skipping: "..res['address'])
+					else
+						local class = iptocclass(res['address'])
+						if(not table.contains(cclasses,class)) then
+							print_verb("C-Class: "..class..".0/24")
+							table.insert(cclasses,class)
+						end
 					end
 				end
 			end
@@ -334,6 +428,15 @@ action = function(host)
 		end
 		for _, res in ipairs(results) do
 			table.insert(response, res['hostname'].." - "..res['address'])
+		end
+		if(dosrv) then
+			table.insert(response,"SRV results:")
+			if(#srvresults==0) then
+				table.insert(response,"No results.")
+			end
+			for _, res in ipairs(srvresults) do
+				table.insert(response, res['hostname'].." - "..res['address'])
+			end
 		end
 		if revcclass then
 			table.insert(response,"Reverse DNS hostnames:")
