@@ -15,7 +15,7 @@ Attempts to find an DNS hostnames by brute force guessing.
 -- @args dns-brute.ipv6 Perform lookup for IPv6 addresses as well. ipv6 can also be se to the value 'only' to only lookup IPv6 records
 -- @args dns-brute.srv Perform lookup for SRV records
 -- @args dns-brute.domain Domain name to brute force if no host is specified
--- @args newtargets Add discovered targets to nmap scan queue (only applies when dns-brute.domain has been set). 
+-- @args newtargets Add discovered targets to nmap scan queue. 
 --	 If dns-brute.ipv6 is used don't forget to set the -6 Nmap flag, if you require scanning IPv6 hosts.
 -- @output
 -- Pre-scan script results:
@@ -41,16 +41,7 @@ license = "Same as Nmap--See http://nmap.org/book/man-legal.html"
 categories = {"intrusive", "discovery"}
 
 prerule = function()
-	if nmap.registry.args['dns-brute.domain'] then
-		local name = nmap.registry.args['dns-brute.domain']
-		if(name:match("^(%d*)%.(%d*)%.(%d*)%.(%d*)$")) then
-			return false
-		else
-			return true
-		end
-	else
-		return false
-	end
+	return stdnse.get_script_args("dns-brute.domain")
 end
 
 hostrule = function(host)
@@ -62,28 +53,54 @@ require 'dns'
 require 'stdnse'
 require 'target'
 
---- Parse a hostname and try to return a domain name
---@param host Hostname to parse
---@return Domain name
-function parse_domain(host)
-	local domainname = ''
-	if(string.find(host,'%.')) then
-		remove = string.sub(host,string.find(host,'%.')+1,string.len(host))
-	else
-		remove = host
-	end
-	if(string.find(remove,'%.')) then
-		domainname = string.sub(host,string.find(host,'%.')+1,string.len(host))
+local HOST_LIST = {
+	'www', 'mail', 'blog', 'ns0', 'ns1', 'mail2', 'mail3', 'admin', 'ads', 'ssh',
+	'voip', 'sip', 'dns', 'ns2', 'ns3', 'dns0', 'dns1', 'dns2', 'eshop', 'shop',
+	'forum', 'ftp', 'ftp0', 'host', 'log', 'mx0', 'mx1', 'mysql', 'sql', 'news',
+	'noc', 'ns', 'auth', 'administration', 'adserver', 'alerts', 'alpha', 'ap',
+	'app', 'apache', 'apps' , 'appserver', 'gw', 'backup', 'beta', 'cdn', 'chat',
+	'citrix', 'cms', 'erp', 'corp', 'intranet', 'crs', 'svn', 'cvs', 'git', 'db',
+	'database', 'demo', 'dev', 'devsql', 'dhcp', 'dmz', 'download', 'en', 'f5',
+	'fileserver', 'firewall', 'help', 'http', 'id', 'info', 'images', 'internal',
+	'internet', 'lab', 'ldap', 'linux', 'local', 'log', 'ipv6', 'syslog',
+	'mailgate', 'main', 'manage', 'mgmt', 'monitor', 'mirror', 'mobile', 'mssql',
+	'oracle', 'exchange', 'owa', 'mta', 'mx', 'mx0', 'mx1', 'ntp', 'ops', 'pbx',
+	'whois', 'ssl', 'secure', 'server', 'smtp', 'squid', 'stage', 'stats', 'test',
+	'upload', 'vm', 'vnc', 'vpn', 'wiki', 'xml',
+}
+
+local SRV_LIST = {
+	'_afpovertcp._tcp', '_ssh._tcp', '_autodiscover._tcp', '_caldav._tcp',
+	'_client._smtp', '_gc._tcp', '_h323cs._tcp', '_h323cs._udp', '_h323ls._tcp',
+	'_h323ls._udp', '_h323rs._tcp', '_h323rs._tcp', '_http._tcp', '_iax.udp',
+	'_imap._tcp', '_imaps._tcp', '_jabber-client._tcp', '_jabber._tcp',
+	'_kerberos-adm._tcp', '_kerberos._tcp', '_kerberos._tcp.dc._msdcs',
+	'_kerberos._udp', '_kpasswd._tcp', '_kpasswd._udp', '_ldap._tcp',
+	'_ldap._tcp.dc._msdcs', '_ldap._tcp.gc._msdcs', '_ldap._tcp.pdc._msdcs',
+	'_msdcs', '_mysqlsrv._tcp', '_ntp._udp', '_pop3._tcp', '_pop3s._tcp',
+	'_sip._tcp', '_sip._tls', '_sip._udp', '_sipfederationtls._tcp',
+	'_sipinternaltls._tcp', '_sips._tcp', '_smtp._tcp', '_stun._tcp',
+	'_stun._udp', '_tcp', '_tls', '_udp', '_vlmcs._tcp', '_vlmcs._udp',
+	'_wpad._tcp', '_xmpp-client._tcp', '_xmpp-server._tcp',
+}
+
+local function guess_domain(host)
+	local name
+
+	name = stdnse.get_hostname(host)
+	if name and name ~= host.ip then
+		return string.match(name, "%.([^.]+%..+)%.?$") or string.match(name, "^([^.]+%.[^.]+)%.?$")
 	else
 		domainname = host
-	end
+		return nil
+ 	end
 	return domainname
 end
 
 --- Remove the last octet of an IP address
 --@param ip IP address to parse
 --@return IP address without the last octet
-function iptocclass(ip)
+local function iptocclass(ip)
 	local o1, o2, o3, o4 = ip:match("^(%d*)%.(%d*)%.(%d*)%.(%d*)$")
 	return o1..'.'..o2..'.'..o3
 end
@@ -103,77 +120,41 @@ function table.contains(table, element)
 	return false
 end
 
---- Try to get the SRV record for a host
---@param host Hostname to resolve
---@result The SRV records or false
-resolve_srv = function (host)
-	local dnsname = host
-	status, result = dns.query(dnsname, {dtype='SRV',retAll=true})
-	if(status == true) then
-		return result
-	else
-		return false
+local function resolve(host, dtype)
+	if dtype=='PTR' then
+		host = dns.reverse(host)
 	end
-end
-
---- Try to get the AAAA record for a host
---@param host Hostname to resolve
---@result The AAAA records or false
-resolve_v6 = function (host)
-	local dnsname = host
-	status, result = dns.query(dnsname, {dtype='AAAA',retAll=true})
-	if(status == true) then
-		return result
-	else
-		return false
-	end
-end
-
---- Try to get the A record for a host
---@param host Hostname to resolve
---@result The A records or false
-resolve = function (host)
-	local dnsname = host
-	status, result = dns.query(dnsname, {dtype='A',retAll=true})
-	if(status == true) then
-		return result
-	else
-		return false
-	end
-end
-
---- Try to get the PTR record for an in-addr.arpa address
---@param host Host to resolve
---@result The PTR records or false
-revresolve = function (host)
-	local ipaddress = dns.reverse(host)
-	status, result = dns.query(ipaddress, {dtype='PTR',retAll=true})
-	if(status == true) then
-		return result
-	else
-		return false
-	end
+	local status, result = dns.query(host, {dtype=dtype,retAll=true})
+	return status and result or false
 end
 
 --- Verbose printing function when -v flag is specified
 --@param msg The message to print
-print_verb = function(msg)
+local function print_verb(msg)
 	local verbosity, debugging = nmap.verbosity, nmap.debugging
 	if verbosity() >= 2 or debugging() > 0 then
 		print(msg)
 	end
 end
 
-thread_main = function( results, ... )
+local function array_iter(array, i, j)
+	return coroutine.wrap(function ()
+		while i <= j do
+			coroutine.yield(array[i])
+			i = i + 1
+		end
+	end)
+end
+
+local function thread_main(domainname, results, name_iter)
 	local condvar = nmap.condvar( results )
-	local what = {n = select("#", ...), ...}
-	for i = 1, what.n do
+	for name in name_iter do
 		if not (ipv6 == 'only') then
-			local res = resolve(what[i]..'.'..domainname)
+			local res = resolve(name..'.'..domainname,"A")
 			if(res) then
 				for _,addr in ipairs(res) do
-					local hostn = what[i]..'.'..domainname
-					if nmap.registry.args['dns-brute.domain'] and target.ALLOW_NEW_TARGETS then
+					local hostn = name..'.'..domainname
+					if target.ALLOW_NEW_TARGETS then
 						stdnse.print_debug("Added target: "..hostn)
 						local status,err = target.add(hostn)
 					end
@@ -183,11 +164,11 @@ thread_main = function( results, ... )
 			end
 		end
 		if ipv6 then
-			local res = resolve_v6(what[i]..'.'..domainname)
+			local res = resolve(name..'.'..domainname,"AAAA")
 			if(res) then
 				for _,addr in ipairs(res) do
-					local hostn = what[i]..'.'..domainname
-					if nmap.registry.args['dns-brute.domain'] and target.ALLOW_NEW_TARGETS then
+					local hostn = name..'.'..domainname
+					if target.ALLOW_NEW_TARGETS then
 						stdnse.print_debug("Added target: "..hostn)
 						local status,err = target.add(hostn)
 					end
@@ -197,19 +178,19 @@ thread_main = function( results, ... )
 			end
 		end
 	end
+	--condvar("signal")
 end
 
-srv_main = function( srvresults, ... )
+local function srv_main(domainname, srvresults, srv_iter )
 	local condvar = nmap.condvar( srvresults )
-	local what = {n = select("#", ...), ...}
-	for i = 1, what.n do
-		local res = resolve_srv(what[i]..'.'..domainname)
+	for name in srv_iter do
+		local res = resolve(name..'.'..domainname,"SRV")
 		if(res) then
 			for _,addr in ipairs(res) do
-				local hostn = what[i]..'.'..domainname
+				local hostn = name..'.'..domainname
 				addr = stdnse.strsplit(":",addr)
 				if not (ipv6 == 'only') then
-					local srvres = resolve(addr[4])
+					local srvres = resolve(addr[4],"A")
 					if(srvres) then
 						for srvhost,srvip in ipairs(srvres) do
 							print_verb("Hostname: "..hostn.." IP: "..srvip)
@@ -222,7 +203,7 @@ srv_main = function( srvresults, ... )
 					end
 				end
 				if ipv6 then
-					local srvres = resolve_v6(addr[4])
+					local srvres = resolve(addr[4],"AAAA")
 					if(srvres) then
 						for srvhost,srvip in ipairs(srvres) do
 							print_verb("Hostname: "..hostn.." IP: "..srvip)
@@ -238,45 +219,49 @@ srv_main = function( srvresults, ... )
 			end
 		end
 	end
+	--condvar("signal")
 end
 
-reverse_main = function( revresults, ... )
+local function reverse_main(domainname, revresults, rev_iter)
 	local condvar = nmap.condvar( revresults )
-	local what = {n = select("#", ...), ...}
-	for i = 1, what.n do
-		local res = revresolve(what[i])
+	for name in rev_iter do
+		local res = resolve(name,"PTR")
 		if(res) then
 			for _,host in ipairs(res) do
 				if(revcclass == 'printall') then
 					if(not string.match(host,'addr.arpa$')) then
 						if nmap.registry.args['dns-brute.domain'] and target.ALLOW_NEW_TARGETS then
-							stdnse.print_debug("Added target: "..what[i])
-							local status,err = target.add(what[i])
+							stdnse.print_debug("Added target: "..name)
+							local status,err = target.add(name)
 						end
-						print_verb("Hostname: "..host.." IP: "..what[i])
-						revresults[#revresults+1] = { hostname=host, address=what[i] }
+						print_verb("Hostname: "..host.." IP: "..name)
+						revresults[#revresults+1] = { hostname=host, address=name }
 					end
 				else
 					if(string.match(host,domainname..'$')) then
 						if nmap.registry.args['dns-brute.domain'] and target.ALLOW_NEW_TARGETS then
-							stdnse.print_debug("Added target: "..what[i])
-							local status,err = target.add(what[i])
+							stdnse.print_debug("Added target: "..name)
+							local status,err = target.add(name)
 						end
-						print_verb("Hostname: "..host.." IP: "..what[i])
-						revresults[#revresults+1] = { hostname=host, address=what[i] }
+						print_verb("Hostname: "..host.." IP: "..name)
+						revresults[#revresults+1] = { hostname=host, address=name }
 					end
 				end
 			end
 		end
 	end
+	--condvar("signal")
 end
 
 action = function(host)
-	if nmap.registry.args['dns-brute.domain'] then
-		domainname = nmap.registry.args['dns-brute.domain']
-	else
-		domainname = parse_domain(stdnse.get_hostname(host))
+	local domainname = nmap.registry.args['dns-brute.domain']
+	if not domainname then
+		domainname = guess_domain(host)
 	end
+	if not domainname then
+		return string.format("Can't guess domain of \"%s\"; use %s.domain script argument.", stdnse.get_hostname(host), SCRIPT_NAME)
+	end
+
 	if not nmap.registry.bruteddomains then
 		nmap.registry.bruteddomains = {}
 	end
@@ -315,23 +300,19 @@ action = function(host)
 				print("dns-brute: Hostlist file not found. Will use default list.")
 			end
 		end
-		if (not hostlist) then	hostlist = {'www', 'mail', 'blog', 'ns0', 'ns1', 'mail2','mail3', 'admin','ads','ssh','voip','sip','dns','ns2','ns3','dns0','dns1','dns2','eshop','shop','forum','ftp', 'ftp0', 'host','log', 'mx0', 'mx1', 'mysql', 'sql', 'news', 'noc', 'ns', 'auth', 'administration', 'adserver', 'alerts', 'alpha', 'ap', 'app', 'apache', 'apps' ,'appserver', 'gw', 'backup', 'beta', 'cdn', 'chat', 'citrix', 'cms', 'erp', 'corp', 'intranet', 'crs', 'svn', 'cvs', 'git', 'db', 'database', 'demo', 'dev', 'devsql', 'dhcp', 'dmz', 'download', 'en', 'f5', 'fileserver', 'firewall', 'help', 'http', 'id', 'info', 'images', 'internal', 'internet', 'lab', 'ldap', 'linux', 'local', 'log', 'ipv6', 'syslog', 'mailgate', 'main', 'manage', 'mgmt', 'monitor', 'mirror', 'mobile', 'mssql', 'oracle', 'exchange', 'owa', 'mta', 'mx', 'mx0', 'mx1', 'ntp', 'ops', 'pbx', 'whois', 'ssl', 'secure', 'server', 'smtp', 'squid', 'stage', 'stats', 'test', 'upload', 'vm', 'vnc', 'vpn', 'wiki', 'xml'} end
-		local srvlist = {'_afpovertcp._tcp','_ssh._tcp','_autodiscover._tcp','_caldav._tcp','_client._smtp','_gc._tcp','_h323cs._tcp','_h323cs._udp','_h323ls._tcp','_h323ls._udp','_h323rs._tcp','_h323rs._tcp','_http._tcp','_iax.udp','_imap._tcp','_imaps._tcp','_jabber-client._tcp','_jabber._tcp','_kerberos-adm._tcp','_kerberos._tcp','_kerberos._tcp.dc._msdcs','_kerberos._udp','_kpasswd._tcp','_kpasswd._udp','_ldap._tcp','_ldap._tcp.dc._msdcs','_ldap._tcp.gc._msdcs','_ldap._tcp.pdc._msdcs','_msdcs','_mysqlsrv._tcp','_ntp._udp','_pop3._tcp','_pop3s._tcp','_sip._tcp','_sip._tls','_sip._udp','_sipfederationtls._tcp','_sipinternaltls._tcp','_sips._tcp','_smtp._tcp','_stun._tcp','_stun._udp','_tcp','_tls','_udp','_vlmcs._tcp','_vlmcs._udp','_wpad._tcp','_xmpp-client._tcp','_xmpp-server._tcp'}
+		if (not hostlist) then hostlist = HOST_LIST end
+		local srvlist = SRV_LIST
 
 		local threads, results, revresults, srvresults = {}, {}, {}, {}
 		results['name'] = "Result:"
 		local condvar = nmap.condvar( results )
 		local i = 1
 		local howmany = math.floor(#hostlist/max_threads)+1
-		if (howmany > 7900) then
-			--Cannot unpack a list with more than 7900 items so we will set it to 7900
-			stdnse.print_debug("Hostlist items per thread is more than 7900. Setting to 7900.")
-			howmany = 7900
-		end
 		stdnse.print_debug("Hosts per thread: "..howmany)
 		repeat
 			local j = math.min(i+howmany, #hostlist)
-			threads[stdnse.new_thread( thread_main,results, unpack(hostlist, i, j)  )] = true
+			local name_iter = array_iter(hostlist, i, j)
+			threads[stdnse.new_thread(thread_main, domainname, results, name_iter)] = true
 			i = j+1
 		until i > #hostlist
 		local done
@@ -352,7 +333,8 @@ action = function(host)
 			stdnse.print_debug("SRV's per thread: "..howmany_ip)
 			repeat
 				local j = math.min(i+howmany_ip, #srvlist)	
-				threads[stdnse.new_thread( srv_main,srvresults, unpack(srvlist, i, j)  )] = true
+				local name_iter = array_iter(srvlist, i, j)
+				threads[stdnse.new_thread(srv_main, domainname, srvresults, name_iter)] = true
 				i = j+1
 			until i > #srvlist
 			local done
@@ -407,7 +389,8 @@ action = function(host)
 			stdnse.print_debug("IP's per thread: "..howmany_ip)
 			repeat
 				local j = math.min(i+howmany_ip, #ipaddresses)	
-				threads[stdnse.new_thread( reverse_main,revresults, unpack(ipaddresses, i, j)  )] = true
+				local name_iter = array_iter(ipaddresses, i, j)
+				threads[stdnse.new_thread(reverse_main, domainname, revresults, name_iter)] = true
 				i = j+1
 			until i > #ipaddresses
 			local done
