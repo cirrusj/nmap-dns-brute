@@ -278,23 +278,20 @@ action = function(host)
 		end
 		stdnse.print_debug("THREADS: "..max_threads)
 		local fileName = nmap.registry.args['dns-brute.hostlist']
-		local commFile = fileName and nmap.fetchfile(fileName)
+		local file = io.open(fileName)
 		local hostlist
-		if commFile then
-			local file = io.open(commFile)
-			if file then
-				hostlist = {}
-				while true do
-					local l = file:read()
-					if not l then
-						break
-					end
-					if not l:match("#!comment:") then
-						table.insert(hostlist, l)
-					end
+		if file then
+			hostlist = {}
+			while true do
+				local l = file:read()
+				if not l then
+					break
 				end
-				file:close()
+				if not l:match("#!comment:") then
+					table.insert(hostlist,l)
+				end
 			end
+			file:close()
 		else
 			if fileName then
 				print("dns-brute: Hostlist file not found. Will use default list.")
