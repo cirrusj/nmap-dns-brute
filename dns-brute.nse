@@ -1,5 +1,5 @@
 description = [[
-Attempts to find an DNS hostnames by brute force guessing.
+Attempts to enumerate DNS hostnames by brute force guessing of common subdomains.
 ]]
 -- 2011-01-26
 
@@ -20,28 +20,33 @@ Attempts to find an DNS hostnames by brute force guessing.
 -- @output
 -- Pre-scan script results:
 -- | dns-brute: 
--- | Result:
--- |   DNS Brute-force hostnames:
--- |   www.foo.com - 127.0.0.1
--- |   mail.foo.com - 127.0.0.2
--- |   blog.foo.com - 127.0.1.3
--- |   ns1.foo.com - 127.0.0.4
--- |   admin.foo.com - 127.0.0.5
--- |   Reverse DNS hostnames:
--- |   srv-32.foo.com - 127.0.0.16
--- |   srv-33.foo.com - 127.0.1.23
--- |   C-Classes:
--- |   127.0.0.0/24
--- |_  127.0.1.0/24
+-- |   DNS Brute-force hostnames
+-- |     www.foo.com - 127.0.0.1
+-- |     mail.foo.com - 127.0.0.2
+-- |     blog.foo.com - 127.0.1.3
+-- |     ns1.foo.com - 127.0.0.4
+-- |     admin.foo.com - 127.0.0.5
+-- |   Reverse DNS hostnames
+-- |     srv-32.foo.com - 127.0.0.16
+-- |     srv-33.foo.com - 127.0.1.23
+-- |   C-Classes
+-- |     127.0.0.0/24
+-- |_    127.0.1.0/24
 
-author = "cirrus"
+author = "cirrus [0x0lab.org]"
 
 license = "Same as Nmap--See http://nmap.org/book/man-legal.html"
 
 categories = {"intrusive", "discovery"}
 
 prerule = function()
-	return stdnse.get_script_args("dns-brute.domain")
+    if not stdnse.get_script_args("dns-brute.domain") then
+      stdnse.print_debug(3,
+        "Skipping '%s' %s, 'dns-brute.domain' argument is missing.",
+        SCRIPT_NAME, SCRIPT_TYPE)
+      return false
+    end
+    return true
 end
 
 hostrule = function(host)
@@ -66,7 +71,7 @@ local HOST_LIST = {
 	'mailgate', 'main', 'manage', 'mgmt', 'monitor', 'mirror', 'mobile', 'mssql',
 	'oracle', 'exchange', 'owa', 'mta', 'mx', 'mx0', 'mx1', 'ntp', 'ops', 'pbx',
 	'whois', 'ssl', 'secure', 'server', 'smtp', 'squid', 'stage', 'stats', 'test',
-	'upload', 'vm', 'vnc', 'vpn', 'wiki', 'xml',
+	'upload', 'vm', 'vnc', 'vpn', 'wiki', 'xml', 'direct',
 }
 
 local SRV_LIST = {
@@ -254,7 +259,7 @@ local function reverse_main(domainname, revresults, rev_iter)
 end
 
 action = function(host)
-	local domainname = nmap.registry.args['dns-brute.domain']
+	local domainname = stdnse.get_script_args('dns-brute.domain')
 	if not domainname then
 		domainname = guess_domain(host)
 	end
@@ -268,7 +273,7 @@ action = function(host)
 	if(not table.contains(nmap.registry.bruteddomains,domainname)) then
 		table.insert(nmap.registry.bruteddomains, domainname)
 		print_verb("Starting dns-brute at: "..domainname)
-		local max_threads = nmap.registry.args['dns-brute.threads'] and tonumber( nmap.registry.args['dns-brute.threads'] ) or 5
+		local max_threads = stdnse.get_script_args('dns-brute.threads') and tonumber( stdnse.get_script_args('dns-brute.threads') ) or 5		
 		ipv6 = stdnse.get_script_args("dns-brute.ipv6") or false
 		dosrv = stdnse.get_script_args("dns-brute.srv") or false
 		if(ipv6 == 'only') then
@@ -277,7 +282,8 @@ action = function(host)
 			revcclass = stdnse.get_script_args("dns-brute.cclass") or false
 		end
 		stdnse.print_debug("THREADS: "..max_threads)
-		local fileName = nmap.registry.args['dns-brute.hostlist']
+		local fileName = stdnse.get_script_args('dns-brute.hostlist')
+		stdnse.print_debug("FILE: "..fileName)
 		local file = io.open(fileName)
 		local hostlist
 		if file then
@@ -288,7 +294,7 @@ action = function(host)
 					break
 				end
 				if not l:match("#!comment:") then
-					table.insert(hostlist,l)
+					table.insert(hostlist, l)
 				end
 			end
 			file:close()
@@ -401,36 +407,43 @@ action = function(host)
 			end
 		end
 		response = {}
-		response['name'] = "Result:"
-		table.insert(response,"DNS Brute-force hostnames:")
+		t_dns = {}
+		t_dns['name'] = "DNS Brute-force hostnames"
 		if(#results==0) then
-			table.insert(response,"No results.")
+			table.insert(t_dns,"No results.")
 		end
 		for _, res in ipairs(results) do
-			table.insert(response, res['hostname'].." - "..res['address'])
+			table.insert(t_dns, res['hostname'].." - "..res['address'])
 		end
+		response[#response + 1] = t_dns
 		if(dosrv) then
-			table.insert(response,"SRV results:")
+			t_srv = {}
+			t_srv['name'] = "SRV results"
 			if(#srvresults==0) then
-				table.insert(response,"No results.")
+				table.insert(t_srv,"No results.")
 			end
 			for _, res in ipairs(srvresults) do
-				table.insert(response, res['hostname'].." - "..res['address'])
+				table.insert(t_srv, res['hostname'].." - "..res['address'])
 			end
+			response[#response + 1] = t_srv
 		end
 		if revcclass then
-			table.insert(response,"Reverse DNS hostnames:")
+			t_rev = {}
+			t_rev['name'] = "Reverse DNS hostnames:"									
 			if(#revresults==0) then
-				table.insert(response,"No results.")
+				table.insert(t_rev,"No results.")
 			end
 			for _, res in ipairs(revresults) do
-				table.insert(response, res['hostname'].." - "..res['address'])
+				table.insert(t_rev, res['hostname'].." - "..res['address'])
 			end
+			response[#response + 1] = t_rev
 			if(#cclasses>0) then
-				table.insert(response,"C-Classes:")
+				t_cclass = {}
+				t_cclass['name'] = "C-Classes:"
 				for _, res in ipairs(cclasses) do
-					table.insert(response, res..".0/24")
+					table.insert(t_cclass, res..".0/24")
 				end
+				response[#response + 1] = t_cclass
 			end
 		end
 		return stdnse.format_output(true, response)
