@@ -283,24 +283,25 @@ action = function(host)
 		end
 		stdnse.print_debug("THREADS: "..max_threads)
 		local fileName = stdnse.get_script_args('dns-brute.hostlist')
-		stdnse.print_debug("FILE: "..fileName)
-		local file = io.open(fileName)
 		local hostlist
-		if file then
-			hostlist = {}
-			while true do
-				local l = file:read()
-				if not l then
-					break
+		if fileName then
+			local file = io.open(fileName)
+			if file then
+				hostlist = {}
+				while true do
+					local l = file:read()
+					if not l then
+						break
+					end
+					if not l:match("#!comment:") then
+						table.insert(hostlist, l)
+					end
 				end
-				if not l:match("#!comment:") then
-					table.insert(hostlist, l)
+				file:close()
+			else
+				if fileName then
+					print("dns-brute: Hostlist file not found. Will use default list.")
 				end
-			end
-			file:close()
-		else
-			if fileName then
-				print("dns-brute: Hostlist file not found. Will use default list.")
 			end
 		end
 		if (not hostlist) then hostlist = HOST_LIST end
